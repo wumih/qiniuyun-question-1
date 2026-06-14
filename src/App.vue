@@ -23,6 +23,7 @@ const volumeLevel = ref(0)
 const systemFrozen = ref(false)
 const voiceOutputEnabled = ref(true)
 const visionEnabled = ref(true)
+const chatHistory = ref([]) // 多轮对话历史记录 [{role, content, time}]
 
 // ===== 内部变量 =====
 let openaiClient = null
@@ -203,9 +204,19 @@ const sendCommand = async () => {
       messageContent = text
     }
 
+    // 构建完整 messages 数组：系统提示词 + 历史对话 + 当前轮
+    const historyMessages = chatHistory.value.map(turn => ({
+      role: turn.role,
+      content: turn.content  // 历史记录只发文字，不重发图片（节省 Token）
+    }))
+
     const stream = await openaiClient.chat.completions.create({
       model: modelName.value,
-      messages: [{ role: 'user', content: messageContent }],
+      messages: [
+        { role: 'system', content: '你是一个智能语音视觉助手。请用中文回答，简洁准确。' },
+        ...historyMessages,
+        { role: 'user', content: messageContent }
+      ],
       max_tokens: 300,
       stream: true // 开启流式输出
     }, { signal: abortController.signal })
@@ -244,6 +255,12 @@ const sendCommand = async () => {
     if (voiceOutputEnabled.value && ttsBuffer.trim()) {
       playTTSChunk(ttsBuffer.trim())
     }
+
+    // 流完整结束后，将这一轮记录进历史记录
+    const now = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    chatHistory.value.push({ role: 'user',      content: text,  time: now })
+    chatHistory.value.push({ role: 'assistant', content: aiReply.value, time: now })
+    transcript.value = '' // 发送成功后清空输入框
 
     // 纯文字模式下，流结束后直接复位
     if (!voiceOutputEnabled.value) {
@@ -299,6 +316,7 @@ const clearAll = () => {
   interruptAI()
   transcript.value = ''
   aiReply.value = ''
+  chatHistory.value = [] // 同时清空历史
 }
 
 // ===== 全局冻结 =====
@@ -399,6 +417,34 @@ const stateLabel = {
 
 
 
+        <!-- 对话历史气泡流 -->
+        <div class="chat-history" v-if="chatHistory.length > 0 || appState === 'PROCESSING' || (appState === 'SPEAKING' && aiReply)">
+          <div class="chat-history-header">
+            <span>💬 对话历史（{{ Math.floor(chatHistory.length / 2) }} 轮）</span>
+            <button class="clear-history-btn" @click="clearAll">清空全部</button>
+          </div>
+          <div class="chat-bubbles">
+            <!-- 已完成的历史记录 -->
+            <div
+              v-for="(turn, idx) in chatHistory"
+              :key="idx"
+              class="bubble"
+              :class="turn.role"
+            >
+              <div class="bubble-meta">{{ turn.role === 'user' ? '🧑 你' : '🤖 AI' }} <span>{{ turn.time }}</span></div>
+              <div class="bubble-text">{{ turn.content }}</div>
+            </div>
+            
+            <!-- 当前正在生成的回答（流式渲染区域） -->
+            <div v-if="appState === 'PROCESSING' || (appState === 'SPEAKING' && aiReply)" class="bubble assistant live-reply">
+              <div class="bubble-meta">🤖 AI (生成中...)</div>
+              <div class="bubble-text">
+                {{ aiReply || '⏳ 神经元推理中...' }}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- 实时转译区（可编辑：语音识别内容可手动修改） -->
         <div class="transcript-area">
           <div class="transcript-label">
@@ -413,12 +459,6 @@ const stateLabel = {
             :readonly="appState === 'PROCESSING' || appState === 'SPEAKING'"
             rows="3"
           ></textarea>
-        </div>
-
-        <!-- AI 回复区 -->
-        <div class="reply-area" v-if="aiReply">
-          <div class="reply-label">🤖 AI 回复</div>
-          <div class="reply-content">{{ aiReply }}</div>
         </div>
 
         <!-- 操作按钮组 -->
@@ -737,4 +777,74 @@ const stateLabel = {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ===== 对话历史气泡流 ===== */
+.chat-history {
+  border: 1px solid #223;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.chat-history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  background: rgba(0,0,0,0.3);
+  font-size: 0.8rem;
+  color: #667788;
+  border-bottom: 1px solid #223;
+}
+.clear-history-btn {
+  background: transparent;
+  border: 1px solid #445;
+  color: #556677;
+  border-radius: 10px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.clear-history-btn:hover { border-color: #ff4444; color: #ff4444; }
+.chat-bubbles {
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scroll-behavior: smooth;
+}
+.chat-bubbles::-webkit-scrollbar { width: 4px; }
+.chat-bubbles::-webkit-scrollbar-track { background: transparent; }
+.chat-bubbles::-webkit-scrollbar-thumb { background: #334; border-radius: 2px; }
+.bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.bubble.user {
+  align-self: flex-end;
+  background: rgba(0, 100, 80, 0.3);
+  border: 1px solid rgba(0,255,204,0.15);
+  color: #cce;
+}
+.bubble.assistant {
+  align-self: flex-start;
+  background: rgba(20, 30, 50, 0.6);
+  border: 1px solid #334;
+  color: #ccd;
+}
+.bubble.live-reply {
+  border-color: #00ffcc;
+  box-shadow: 0 0 10px rgba(0,255,204,0.1);
+}
+.bubble-meta {
+  font-size: 0.72rem;
+  color: #556;
+  margin-bottom: 4px;
+}
+.bubble-meta span { margin-left: 6px; }
+.bubble-text { word-break: break-word; white-space: pre-wrap; }
 </style>
