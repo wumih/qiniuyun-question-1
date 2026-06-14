@@ -4,6 +4,11 @@
 
 ---
 
+## 🎬 项目演示 (Demo)
+
+<video src="./assets/demo.mp4" controls width="100%"></video>
+
+---
 ## ⚠️ 核心注意事项（关于视觉多模态能力）
 
 **请注意：默认接入的文本大模型（如 DeepSeek `deepseek-chat` 等）在物理层面仅支持纯文本输入，无法“看到”摄像头的画面！**
