@@ -31,8 +31,8 @@ let audioContext = null
 let analyser = null
 let microphone = null
 let abortController = null
-let currentUtterance = null
 let vadRafId = null
+let ttsQueueCount = 0 // 用于跟踪未读完的 TTS 队列数量
 
 // ===== 初始化 =====
 onMounted(() => {
@@ -203,20 +203,53 @@ const sendCommand = async () => {
       messageContent = text
     }
 
-    const response = await openaiClient.chat.completions.create({
+    const stream = await openaiClient.chat.completions.create({
       model: modelName.value,
       messages: [{ role: 'user', content: messageContent }],
-      max_tokens: 300
+      max_tokens: 300,
+      stream: true // 开启流式输出
     }, { signal: abortController.signal })
 
-    const reply = response.choices[0].message.content
-    aiReply.value = reply
+    aiReply.value = ''
+    let ttsBuffer = ''
+    window.speechSynthesis.cancel()
+    ttsQueueCount = 0
 
-    if (voiceOutputEnabled.value) {
-      playTTS(reply)       // 语音模式：朗读 + 状态会走到 SPEAKING
-    } else {
-      appState.value = 'IDLE'  // 纯文字模式：直接复位，不触发 TTS
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content || ''
+      if (delta) {
+        if (aiReply.value === '神经元推理中...') aiReply.value = '' // 清除占位符
+        aiReply.value += delta
+        ttsBuffer += delta
+
+        if (voiceOutputEnabled.value) {
+          // 句子切片：遇到标点符号就读
+          const sentenceEndRegex = /([。！？\n.!?]+)/
+          const match = ttsBuffer.match(sentenceEndRegex)
+          
+          if (match) {
+            const splitIndex = match.index + match[0].length
+            const sentenceToSpeak = ttsBuffer.substring(0, splitIndex).trim()
+            ttsBuffer = ttsBuffer.substring(splitIndex)
+            
+            if (sentenceToSpeak) {
+              playTTSChunk(sentenceToSpeak)
+            }
+          }
+        }
+      }
     }
+
+    // 流结束后，把剩余的缓冲读完
+    if (voiceOutputEnabled.value && ttsBuffer.trim()) {
+      playTTSChunk(ttsBuffer.trim())
+    }
+
+    // 纯文字模式下，流结束后直接复位
+    if (!voiceOutputEnabled.value) {
+      appState.value = 'IDLE'
+    }
+
   } catch (error) {
     if (error.name === 'AbortError') return
     errorMessage.value = '请求失败：' + error.message
@@ -224,21 +257,39 @@ const sendCommand = async () => {
   }
 }
 
-// ===== TTS =====
-const playTTS = (text) => {
-  window.speechSynthesis.cancel()
-  currentUtterance = new SpeechSynthesisUtterance(text)
-  currentUtterance.lang = 'zh-CN'
-  currentUtterance.rate = 1.1
-  currentUtterance.onstart = () => { appState.value = 'SPEAKING' }
-  currentUtterance.onend = () => { appState.value = 'IDLE' }
-  currentUtterance.onerror = () => { appState.value = 'IDLE' }
-  window.speechSynthesis.speak(currentUtterance)
+// ===== TTS (流式切片队列) =====
+const playTTSChunk = (text) => {
+  const utterance = new SpeechSynthesisUtterance(text)
+  utterance.lang = 'zh-CN'
+  utterance.rate = 1.1
+  
+  ttsQueueCount++
+  
+  utterance.onstart = () => { appState.value = 'SPEAKING' }
+  utterance.onend = () => {
+    ttsQueueCount--
+    // 队列清空且请求已完成时（非 PROCESSING），回到待机
+    if (ttsQueueCount <= 0) {
+      ttsQueueCount = 0
+      if (appState.value !== 'PROCESSING') {
+        appState.value = 'IDLE'
+      }
+    }
+  }
+  utterance.onerror = () => {
+    ttsQueueCount--
+    if (ttsQueueCount <= 0) {
+      ttsQueueCount = 0
+      appState.value = 'IDLE'
+    }
+  }
+  window.speechSynthesis.speak(utterance)
 }
 
 // ===== 打断 AI 播报 =====
 const interruptAI = () => {
   window.speechSynthesis.cancel()
+  ttsQueueCount = 0
   if (abortController) { abortController.abort(); abortController = null }
   appState.value = 'IDLE'
 }
@@ -256,6 +307,7 @@ const toggleFreeze = () => {
   if (systemFrozen.value) {
     if (abortController) { abortController.abort(); abortController = null }
     window.speechSynthesis.cancel()
+    ttsQueueCount = 0
     try { recognition.stop() } catch (e) {}
     if (videoRef.value) videoRef.value.pause()
     appState.value = 'IDLE'
