@@ -6,7 +6,9 @@
 
 ## 🎬 项目演示 (Demo)
 
-<video src="https://raw.githubusercontent.com/wumih/qiniuyun-question-1/main/assets/demo.mp4" controls width="100%"></video>
+由于 GitHub 原生环境对大体积视频源文件的渲染限制，我们建议您点击下方链接，直接在 GitHub 内置播放器中观看高清演示（带声音）：
+
+👉 **[🎥 点击此处在线观看项目演示视频 (Watch Demo Video)](https://github.com/wumih/qiniuyun-question-1/blob/main/assets/demo.mp4)**
 
 ---
 ## ⚠️ 核心注意事项（关于视觉多模态能力）
