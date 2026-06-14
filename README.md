@@ -6,7 +6,7 @@
 
 ## 🎬 项目演示 (Demo)
 
-<video src="./assets/demo.mp4" controls width="100%"></video>
+<video src="https://raw.githubusercontent.com/wumih/qiniuyun-question-1/main/assets/demo.mp4" controls width="100%"></video>
 
 ---
 ## ⚠️ 核心注意事项（关于视觉多模态能力）
